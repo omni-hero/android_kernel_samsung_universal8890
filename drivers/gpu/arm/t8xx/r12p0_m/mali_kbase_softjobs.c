@@ -57,7 +57,7 @@ void kbasep_add_waiting_soft_job(struct kbase_jd_atom *katom)
 	spin_unlock_irqrestore(&kctx->waiting_soft_jobs_lock, lflags);
 }
 
-int kbasep_read_soft_event_status(
+static int kbasep_read_soft_event_status(
 		struct kbase_context *kctx, u64 evt, unsigned char *status)
 {
 	unsigned char *mapped_evt;
@@ -74,7 +74,7 @@ int kbasep_read_soft_event_status(
 	return 0;
 }
 
-int kbasep_write_soft_event_status(
+static int kbasep_write_soft_event_status(
 		struct kbase_context *kctx, u64 evt, unsigned char new_status)
 {
 	unsigned char *mapped_evt;
