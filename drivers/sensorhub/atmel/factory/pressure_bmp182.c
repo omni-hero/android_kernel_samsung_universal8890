@@ -33,16 +33,19 @@ static ssize_t sea_level_pressure_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
 	struct ssp_data *data = dev_get_drvdata(dev);
+	int iNewSeaLevelPressure;
 
-	sscanf(buf, "%d", &data->sealevelpressure);
+	sscanf(buf, "%d", &iNewSeaLevelPressure);
 
-	if (data->sealevelpressure == 0) {
+	if (iNewSeaLevelPressure == 0) {
 		pr_info("%s, our->temperature = 0\n", __func__);
-		data->sealevelpressure = -1;
+		iNewSeaLevelPressure = -1;
 	}
 
-	pr_info("[SSP] %s sea_level_pressure = %d\n",
-		__func__, data->sealevelpressure);
+	input_report_rel(data->pressure_input_dev, REL_DIAL,
+		iNewSeaLevelPressure);
+	input_sync(data->pressure_input_dev);
+
 	return size;
 }
 
@@ -79,7 +82,7 @@ int pressure_open_calibration(struct ssp_data *data)
 
 	iErr = kstrtoint(chBuf, 10, &data->iPressureCal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed. %d\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed. %d", __func__, iErr);
 		return iErr;
 	}
 
@@ -99,7 +102,7 @@ static ssize_t pressure_cabratioin_store(struct device *dev,
 
 	iErr = kstrtoint(buf, 10, &iPressureCal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed.(%d)\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed.(%d)", __func__, iErr);
 		return iErr;
 	}
 

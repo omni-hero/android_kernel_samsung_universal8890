@@ -14,11 +14,13 @@
  */
 #include "../ssp.h"
 
-#define LPS25H_REV	6
-#define	VENDOR_BOSCH		"BOSCH"
-#define	CHIP_ID_BOSCH		"BMP180"
-#define	VENDOR_STM		"STM"
-#define	CHIP_ID_LPS25H		"LPS25H"
+#define BOSCH_ID	0
+#define	VENDOR		"BOSCH"
+#define	CHIP_ID		"BMP280"
+
+#define STM_ID		1
+#define VENDOR_STM	"STM"
+#define CHIP_ID_STM	"LPS25H"
 
 #define CALIBRATION_FILE_PATH		"/efs/FactoryApp/baro_delta"
 
@@ -34,15 +36,15 @@ static ssize_t sea_level_pressure_store(struct device *dev,
 {
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	sscanf(buf, "%d", &data->sealevelpressure);
+	sscanf(buf, "%d", &data->buf[PRESSURE_SENSOR].pressure_sealevel);
 
-	if (data->sealevelpressure == 0) {
+	if (data->buf[PRESSURE_SENSOR].pressure_sealevel == 0) {
 		pr_info("%s, our->temperature = 0\n", __func__);
-		data->sealevelpressure = -1;
+		data->buf[PRESSURE_SENSOR].pressure_sealevel = -1;
 	}
 
 	pr_info("[SSP] %s sea_level_pressure = %d\n",
-		__func__, data->sealevelpressure);
+		__func__, data->buf[PRESSURE_SENSOR].pressure_sealevel);
 	return size;
 }
 
@@ -71,21 +73,23 @@ int pressure_open_calibration(struct ssp_data *data)
 		pr_err("[SSP]: %s - Can't read the cal data from file (%d)\n",
 			__func__, iErr);
         filp_close(cal_filp, current->files);
-        set_fs(old_fs);
+        set_fs(old_fs);    
 		return iErr;
 	}
 	filp_close(cal_filp, current->files);
 	set_fs(old_fs);
 
-	iErr = kstrtoint(chBuf, 10, &data->iPressureCal);
+	iErr = kstrtoint(chBuf, 10, &data->buf[PRESSURE_SENSOR].pressure_cal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed. %d\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed. %d", __func__, iErr);
 		return iErr;
 	}
 
-	ssp_dbg("[SSP]: open barometer calibration %d\n", data->iPressureCal);
+	ssp_info("open barometer calibration %d",
+		data->buf[PRESSURE_SENSOR].pressure_cal);
 
-	if (data->iPressureCal < PR_ABS_MIN || data->iPressureCal > PR_ABS_MAX)
+	if (data->buf[PRESSURE_SENSOR].pressure_cal < PR_ABS_MIN
+		|| data->buf[PRESSURE_SENSOR].pressure_cal > PR_ABS_MAX)
 		pr_err("[SSP]: %s - wrong offset value!!!\n", __func__);
 
 	return iErr;
@@ -99,14 +103,14 @@ static ssize_t pressure_cabratioin_store(struct device *dev,
 
 	iErr = kstrtoint(buf, 10, &iPressureCal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed.(%d)\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed.(%d)", __func__, iErr);
 		return iErr;
 	}
 
 	if (iPressureCal < PR_ABS_MIN || iPressureCal > PR_ABS_MAX)
 		return -EINVAL;
 
-	data->iPressureCal = (s32)iPressureCal;
+	data->buf[PRESSURE_SENSOR].pressure_cal = (s32)iPressureCal;
 
 	return size;
 }
@@ -118,7 +122,7 @@ static ssize_t pressure_cabratioin_show(struct device *dev,
 
 	pressure_open_calibration(data);
 
-	return sprintf(buf, "%d\n", data->iPressureCal);
+	return sprintf(buf, "%d\n", data->buf[PRESSURE_SENSOR].pressure_cal);
 }
 
 static ssize_t eeprom_check_show(struct device *dev,
@@ -142,7 +146,7 @@ static ssize_t eeprom_check_show(struct device *dev,
 		goto exit;
 	}
 
-	ssp_dbg("[SSP]: %s - %u\n", __func__, chTempBuf);
+	ssp_infof("%u", chTempBuf);
 
 	exit:
 	return snprintf(buf, PAGE_SIZE, "%d", chTempBuf);
@@ -152,31 +156,23 @@ static ssize_t eeprom_check_show(struct device *dev,
 static ssize_t pressure_vendor_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-#if defined(LPS25H_REV)
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	if(data->ap_rev >= LPS25H_REV)
+	if (data->pressure_type == STM_ID)
 		return sprintf(buf, "%s\n", VENDOR_STM);
 	else
-		return sprintf(buf, "%s\n", VENDOR_BOSCH);
-#else
-	return sprintf(buf, "%s\n", VENDOR_BOSCH);
-#endif
+		return sprintf(buf, "%s\n", VENDOR);
 }
 
 static ssize_t pressure_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-#if defined (LPS25H_REV)
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	if(data->ap_rev >= LPS25H_REV)
-		return sprintf(buf, "%s\n", CHIP_ID_LPS25H);
+	if (data->pressure_type == STM_ID)
+		return sprintf(buf, "%s\n", CHIP_ID_STM);
 	else
-		return sprintf(buf, "%s\n", CHIP_ID_BOSCH);
-#else
-	return sprintf(buf, "%s\n", CHIP_ID_BOSCH);
-#endif
+		return sprintf(buf, "%s\n", CHIP_ID);
 }
 
 static DEVICE_ATTR(vendor,  S_IRUGO, pressure_vendor_show, NULL);
@@ -184,7 +180,7 @@ static DEVICE_ATTR(name,  S_IRUGO, pressure_name_show, NULL);
 static DEVICE_ATTR(eeprom_check, S_IRUGO, eeprom_check_show, NULL);
 static DEVICE_ATTR(calibration,  S_IRUGO | S_IWUSR | S_IWGRP,
 	pressure_cabratioin_show, pressure_cabratioin_store);
-static DEVICE_ATTR(sea_level_pressure, /*S_IRUGO |*/ S_IWUSR | S_IWGRP,
+static DEVICE_ATTR(sea_level_pressure, S_IWUSR | S_IWGRP,
 	NULL, sea_level_pressure_store);
 
 static struct device_attribute *pressure_attrs[] = {
@@ -196,39 +192,13 @@ static struct device_attribute *pressure_attrs[] = {
 	NULL,
 };
 
-#if defined (LPS25H_REV)
-static struct device_attribute *pressure_attrs_lps25h[] = {
-	&dev_attr_vendor,
-	&dev_attr_name,
-	&dev_attr_calibration,
-	&dev_attr_sea_level_pressure,
-	NULL,
-};
-#endif
-
 void initialize_pressure_factorytest(struct ssp_data *data)
 {
-#if defined (LPS25H_REV)
-	if(data->ap_rev >= LPS25H_REV)
-		sensors_register(data->prs_device, data, pressure_attrs_lps25h,
-			"barometer_sensor");
-	else
-		sensors_register(data->prs_device, data, pressure_attrs,
-			"barometer_sensor");
-#else
 	sensors_register(data->prs_device, data, pressure_attrs,
 		"barometer_sensor");
-#endif
 }
 
 void remove_pressure_factorytest(struct ssp_data *data)
 {
-#if defined (LPS25H_REV)
-	if(data->ap_rev >= LPS25H_REV)
-		sensors_unregister(data->prs_device, pressure_attrs_lps25h);
-	else
-		sensors_unregister(data->prs_device, pressure_attrs);
-#else
 	sensors_unregister(data->prs_device, pressure_attrs);
-#endif
 }

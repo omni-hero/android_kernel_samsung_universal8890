@@ -14,11 +14,10 @@
  */
 #include "../ssp.h"
 
-#define LPS25H_REV	6
-#define	VENDOR_BOSCH		"BOSCH"
-#define	CHIP_ID_BOSCH		"BMP180"
-#define	VENDOR_STM		"STM"
-#define	CHIP_ID_LPS25H		"LPS25H"
+#define	VENDOR		"STM"
+#define	CHIP_ID		"LPS25H"
+#define	LPS25H_REV	6
+
 
 #define CALIBRATION_FILE_PATH		"/efs/FactoryApp/baro_delta"
 
@@ -79,7 +78,7 @@ int pressure_open_calibration(struct ssp_data *data)
 
 	iErr = kstrtoint(chBuf, 10, &data->iPressureCal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed. %d\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed. %d", __func__, iErr);
 		return iErr;
 	}
 
@@ -99,7 +98,7 @@ static ssize_t pressure_cabratioin_store(struct device *dev,
 
 	iErr = kstrtoint(buf, 10, &iPressureCal);
 	if (iErr < 0) {
-		pr_err("[SSP]: %s - kstrtoint failed.(%d)\n", __func__, iErr);
+		pr_err("[SSP]: %s - kstrtoint failed.(%d)", __func__, iErr);
 		return iErr;
 	}
 
@@ -120,7 +119,7 @@ static ssize_t pressure_cabratioin_show(struct device *dev,
 
 	return sprintf(buf, "%d\n", data->iPressureCal);
 }
-
+/*
 static ssize_t eeprom_check_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -136,7 +135,6 @@ static ssize_t eeprom_check_show(struct device *dev,
 	msg->free_buffer = 0;
 
 	iRet = ssp_spi_sync(data, msg, 3000);
-
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Pressure Selftest Timeout!!\n", __func__);
 		goto exit;
@@ -147,47 +145,31 @@ static ssize_t eeprom_check_show(struct device *dev,
 	exit:
 	return snprintf(buf, PAGE_SIZE, "%d", chTempBuf);
 }
-
+*/
 /* sysfs for vendor & name */
 static ssize_t pressure_vendor_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-#if defined(LPS25H_REV)
-	struct ssp_data *data = dev_get_drvdata(dev);
+	//struct ssp_data *data = dev_get_drvdata(dev);
 
-	if(data->ap_rev >= LPS25H_REV)
-		return sprintf(buf, "%s\n", VENDOR_STM);
-	else
-		return sprintf(buf, "%s\n", VENDOR_BOSCH);
-#else
-	return sprintf(buf, "%s\n", VENDOR_BOSCH);
-#endif
+	return sprintf(buf, "%s\n", VENDOR);
 }
 
 static ssize_t pressure_name_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-#if defined (LPS25H_REV)
-	struct ssp_data *data = dev_get_drvdata(dev);
-
-	if(data->ap_rev >= LPS25H_REV)
-		return sprintf(buf, "%s\n", CHIP_ID_LPS25H);
-	else
-		return sprintf(buf, "%s\n", CHIP_ID_BOSCH);
-#else
-	return sprintf(buf, "%s\n", CHIP_ID_BOSCH);
-#endif
+	return sprintf(buf, "%s\n", CHIP_ID);
 }
 
 static DEVICE_ATTR(vendor,  S_IRUGO, pressure_vendor_show, NULL);
 static DEVICE_ATTR(name,  S_IRUGO, pressure_name_show, NULL);
-static DEVICE_ATTR(eeprom_check, S_IRUGO, eeprom_check_show, NULL);
+/*static DEVICE_ATTR(eeprom_check, S_IRUGO, eeprom_check_show, NULL); */
 static DEVICE_ATTR(calibration,  S_IRUGO | S_IWUSR | S_IWGRP,
 	pressure_cabratioin_show, pressure_cabratioin_store);
 static DEVICE_ATTR(sea_level_pressure, /*S_IRUGO |*/ S_IWUSR | S_IWGRP,
 	NULL, sea_level_pressure_store);
-
-static struct device_attribute *pressure_attrs[] = {
+/*
+static struct device_attribute *pressure_attrs_bmp280[] = {
 	&dev_attr_vendor,
 	&dev_attr_name,
 	&dev_attr_calibration,
@@ -195,40 +177,21 @@ static struct device_attribute *pressure_attrs[] = {
 	&dev_attr_eeprom_check,
 	NULL,
 };
-
-#if defined (LPS25H_REV)
-static struct device_attribute *pressure_attrs_lps25h[] = {
+*/
+static struct device_attribute *pressure_attrs[] = {
 	&dev_attr_vendor,
 	&dev_attr_name,
 	&dev_attr_calibration,
 	&dev_attr_sea_level_pressure,
 	NULL,
 };
-#endif
 
 void initialize_pressure_factorytest(struct ssp_data *data)
 {
-#if defined (LPS25H_REV)
-	if(data->ap_rev >= LPS25H_REV)
-		sensors_register(data->prs_device, data, pressure_attrs_lps25h,
-			"barometer_sensor");
-	else
-		sensors_register(data->prs_device, data, pressure_attrs,
-			"barometer_sensor");
-#else
-	sensors_register(data->prs_device, data, pressure_attrs,
-		"barometer_sensor");
-#endif
+	sensors_register(data->prs_device, data, pressure_attrs, "barometer_sensor");
 }
 
 void remove_pressure_factorytest(struct ssp_data *data)
 {
-#if defined (LPS25H_REV)
-	if(data->ap_rev >= LPS25H_REV)
-		sensors_unregister(data->prs_device, pressure_attrs_lps25h);
-	else
-		sensors_unregister(data->prs_device, pressure_attrs);
-#else
 	sensors_unregister(data->prs_device, pressure_attrs);
-#endif
 }
