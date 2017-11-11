@@ -19,7 +19,6 @@
 #include <linux/fs.h>		/* struct inode and struct file */
 #include <linux/mutex.h>
 
-
 #define MC_VERSION(major, minor) \
 		(((major & 0x0000ffff) << 16) | (minor & 0x0000ffff))
 #define MC_VERSION_MAJOR(x) ((x) >> 16)
@@ -73,7 +72,7 @@ extern struct mc_device_ctx g_ctx;
 
 /* Debug stuff */
 struct kasnprintf_buf {
-	struct mutex mutex; 	/* Protect buf/size/off access */
+	struct mutex mutex; 	/* Protect buf/size/off access */ 
 	gfp_t gfp;
 	void *buf;
 	int size;

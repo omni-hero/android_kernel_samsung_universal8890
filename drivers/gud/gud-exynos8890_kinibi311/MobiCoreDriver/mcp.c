@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2016 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -139,9 +139,9 @@ static struct mcp_context {
 	struct mutex		last_mcp_cmds_mutex; /* Log protection */
 	struct mcp_command_info {
 		u64			cpu_clk;	/* Kernel time */
-		pid_t		pid;	/* Caller PID */
-		enum cmd_id	id;	/* MCP command ID */
-		u32		session_id;
+		pid_t			pid;		/* Caller PID */
+		enum cmd_id		id;		/* MCP command ID */
+		u32			session_id;
 		char			uuid_str[34];
 		enum state {
 			UNUSED,		/* Unused slot */
@@ -149,11 +149,11 @@ static struct mcp_context {
 			SENT,		/* Waiting for response */
 			COMPLETE,	/* Got result */
 			FAILED,		/* Something went wrong */
-		}		state;	/* Command processing state */
-		enum mcp_result	result;	/* Command result */
-		int		errno;	/* Return code */
-	}			last_mcp_cmds[MCP_LOG_SIZE];
-	int			last_mcp_cmds_index;
+		}			state;	/* Command processing state */
+		enum mcp_result		result;	/* Command result */
+		int			errno;	/* Return code */
+	}				last_mcp_cmds[MCP_LOG_SIZE];
+	int				last_mcp_cmds_index;
 } mcp_ctx;
 
 static const char *mcp_cmd_to_string(enum cmd_id id)
@@ -381,19 +381,22 @@ int mcp_session_waitnotif(struct mcp_session *session, s32 timeout,
 
 end:
 	mutex_lock(&mcp_ctx.notifications_mutex);
-	if (ret)
-		session->notif_state = MCP_NOTIF_DEAD;
-	else
+	if (!ret)
 		session->notif_state = MCP_NOTIF_CONSUMED;
+	else if (ret != -ERESTARTSYS)
+		session->notif_state = MCP_NOTIF_DEAD;
+	session->notif_cpu_clk = local_clock();
 	mutex_unlock(&mcp_ctx.notifications_mutex);
 
 	mutex_unlock(&session->notif_wait_lock);
 	if (ret && ((ret != -ETIME) || !silent_expiry)) {
+#ifdef CONFIG_FREEZER
 		if (ret == -ERESTARTSYS && system_freezing_cnt.counter == 1)
 			mc_dev_devel("freezing session %x\n", session->id);
 		else
-		mc_dev_info("session %x ec %d ret %d\n",
-			    session->id, session->exit_code, ret);
+#endif
+			mc_dev_devel("session %x ec %d ret %d\n",
+				     session->id, session->exit_code, ret);
 	}
 
 	return ret;
@@ -499,10 +502,11 @@ static inline int wait_mcp_notification(void)
 	}
 
 	/* TEE halted or dead: dump status and SMC log */
-	//mark_mcp_dead();
+	/* ExySp */
+//	mark_mcp_dead();
 	mcp_dump_mobicore_status();
-
 	panic("tbase halt");
+
 	return -ETIME;
 }
 
@@ -632,9 +636,13 @@ out:
 	}
 
 	if (err) {
-		mc_dev_err("%s: res %d/ret %d\n",
-			   mcp_cmd_to_string(cmd_id), msg->rsp_header.result,
-			   err);
+		if ((cmd_id == MC_MCP_CMD_CLOSE_SESSION) && (err == -EAGAIN))
+			mc_dev_devel("%s: try again\n",
+				     mcp_cmd_to_string(cmd_id));
+		else
+			mc_dev_err("%s: res %d/ret %d\n",
+				   mcp_cmd_to_string(cmd_id),
+				   msg->rsp_header.result, err);
 		return err;
 	}
 
@@ -971,6 +979,7 @@ static inline bool mcp_notifications_flush_nolock(void)
 		mc_dev_devel("pop %x\n", session->id);
 		notif_queue_push(session->id);
 		session->notif_state = MCP_NOTIF_SENT;
+		session->notif_cpu_clk = local_clock();
 		list_del_init(&session->notifications_list);
 		flushed = true;
 	}
@@ -1010,6 +1019,7 @@ int mcp_notify(struct mcp_session *session)
 			list_add_tail(&session->notifications_list,
 				      &mcp_ctx.notifications);
 			session->notif_state = MCP_NOTIF_QUEUED;
+			session->notif_cpu_clk = local_clock();
 			mc_dev_devel("push %x\n", session->id);
 		}
 
@@ -1022,6 +1032,7 @@ int mcp_notify(struct mcp_session *session)
 	} else {
 		notif_queue_push(session->id);
 		session->notif_state = MCP_NOTIF_SENT;
+		session->notif_cpu_clk = local_clock();
 		if (mcp_ctx.scheduler_cb(MCP_NSIQ)) {
 			mc_dev_err("MC_SMC_N_SIQ failed\n");
 			ret = -EPROTO;
@@ -1051,7 +1062,6 @@ static inline void handle_session_notif(u32 session_id, u32 exit_code)
 {
 	struct mcp_session *session = NULL, *s;
 
-	mc_dev_devel("notification from %x ec %d\n", session_id, exit_code);
 	mutex_lock(&mcp_ctx.sessions_lock);
 	list_for_each_entry(s, &mcp_ctx.sessions, list) {
 		if (s->id == session_id) {
@@ -1060,11 +1070,11 @@ static inline void handle_session_notif(u32 session_id, u32 exit_code)
 		}
 	}
 
+	mc_dev_devel("notification from session %x exit code %d state %d\n",
+		     session_id, exit_code, session ? session->state : -1);
 	if (session) {
 		/* TA has terminated */
 		if (exit_code) {
-			mc_dev_devel("exit code %d for session %x state %d",
-				     session_id, exit_code, session->state);
 			/* Update exit code, or not */
 			mutex_lock(&session->exit_code_lock);
 			/*
@@ -1089,6 +1099,7 @@ static inline void handle_session_notif(u32 session_id, u32 exit_code)
 		/* Unblock waiter */
 		mutex_lock(&mcp_ctx.notifications_mutex);
 		session->notif_state = MCP_NOTIF_RECEIVED;
+		session->notif_cpu_clk = local_clock();
 		mutex_unlock(&mcp_ctx.notifications_mutex);
 		complete(&session->completion);
 	}
@@ -1175,6 +1186,9 @@ int mcp_start(void)
 	size_t q_len = ALIGN(2 * (sizeof(struct notification_queue_header) +
 		NQ_NUM_ELEMS * sizeof(struct notification)), 4);
 	int ret;
+#if defined(irq_get_irq_data)
+	struct irq_data *irq_d;
+#endif
 
 	/* Make sure we have an interrupt number before going on */
 #if defined(CONFIG_OF)
@@ -1190,6 +1204,13 @@ int mcp_start(void)
 		return -EINVAL;
 	}
 
+	/*
+	 * Initialize the time structure for SWd
+	 * At this stage, we don't know if the SWd needs to get the REE time and
+	 * we set it anyway.
+	 */
+	mcp_update_time();
+
 	/* Call the INIT fastcall to setup shared buffers */
 	ret = mc_fc_init(virt_to_phys(mcp_ctx.base),
 			 (uintptr_t)mcp_ctx.mcp_buffer -
@@ -1204,6 +1225,11 @@ int mcp_start(void)
 	mcp_ctx.mcp_buffer->message.init_values.irq = MC_INTR_SSIQ_SWD;
 #endif
 	mcp_ctx.mcp_buffer->message.init_values.flags |= MC_IV_FLAG_TIME;
+#if defined(irq_get_irq_data)
+	irq_d = irq_get_irq_data(mcp_ctx.irq);
+	if (irq_d)
+		mcp_ctx.mcp_buffer->message.init_values.irq = irq_d->hwirq;
+#endif
 	mcp_ctx.mcp_buffer->message.init_values.time_ofs =
 		(u32)((uintptr_t)mcp_ctx.time - (uintptr_t)mcp_ctx.base);
 	mcp_ctx.mcp_buffer->message.init_values.time_len =
@@ -1384,8 +1410,9 @@ int mcp_debug_sessions(struct kasnprintf_buf *buf)
 	int ret;
 
 	/* Header */
-	ret = kasnprintf(buf, "%4s %4s %4s %-15s %-11s\n",
-			 "ID", "type", "ec", "state", "notif state");
+	ret = kasnprintf(buf, "%20s %4s %4s %4s %-15s %-11s\n",
+			 "CPU clock", "ID", "type", "ec", "state",
+			 "notif state");
 	if (ret < 0)
 		return ret;
 
@@ -1393,9 +1420,10 @@ int mcp_debug_sessions(struct kasnprintf_buf *buf)
 	list_for_each_entry(session, &mcp_ctx.sessions, list) {
 		s32 exit_code = mcp_session_exitcode(session);
 
-		ret = kasnprintf(buf, "%4x %-4s %4d %-15s %-11s\n",
-				 session->id, session->is_gp ? "GP" : "MC",
-				 exit_code, state_to_string(session->state),
+		ret = kasnprintf(buf, "%20llu %4x %-4s %4d %-15s %-11s\n",
+				 session->notif_cpu_clk, session->id,
+				 session->is_gp ? "GP" : "MC", exit_code,
+				 state_to_string(session->state),
 				 notif_state_to_string(session->notif_state));
 		if (ret < 0)
 			break;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2015 TRUSTONIC LIMITED
+ * Copyright (c) 2013-2016 TRUSTONIC LIMITED
  * All Rights Reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -133,11 +133,11 @@ ssize_t debug_generic_read(struct file *file, char __user *user_buf,
 		}
 
 	ret = simple_read_from_buffer(user_buf, count, ppos, buf->buf,
-									buf->off);
-	
-	end:
-		mutex_unlock(&buf->mutex);
-		return ret;
+				      buf->off);
+
+end:
+	mutex_unlock(&buf->mutex);
+	return ret;
 	}
 
 int debug_generic_open(struct inode *inode, struct file *file)
@@ -306,7 +306,9 @@ static int suspend_notifier(struct notifier_block *nb, unsigned long event,
 static int mobicore_start(void)
 {
 	struct mc_version_info version_info;
+#ifdef CONFIG_TRUSTONIC_TEE_LPAE
 	bool dynamic_lpae = false;
+#endif
 	int ret;
 
 	ret = mc_logging_start();
@@ -373,7 +375,9 @@ static int mobicore_start(void)
 	/* Determine which features are supported */
 	switch (version_info.version_mci) {
 	case MC_VERSION(1, 4):	/* 310 */
+#ifdef CONFIG_TRUSTONIC_TEE_LPAE
 		dynamic_lpae = true;
+#endif
 		/* Fall through */
 	case MC_VERSION(1, 3):
 		g_ctx.f_time = true;
