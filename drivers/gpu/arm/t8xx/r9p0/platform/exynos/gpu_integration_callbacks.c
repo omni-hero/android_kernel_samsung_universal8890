@@ -154,6 +154,9 @@ void gpu_destroy_context(void *ctx)
 		set_hmp_aggressive_yield(false);
 #endif
 	}
+#ifdef CONFIG_MALI_DVFS_USER
+	gpu_dvfs_check_destroy_context(kctx);
+#endif
 }
 
 int gpu_vendor_dispatch(struct kbase_context *kctx, void * const args, u32 args_size)
@@ -1058,8 +1061,13 @@ struct kbase_vendor_callbacks exynos_callbacks = {
 	.hwcnt_force_stop = NULL,
 #endif
 #ifdef CONFIG_MALI_DVFS
+#ifdef CONFIG_MALI_DVFS_USER_GOVERNOR
+	.pm_metrics_init = NULL,
+	.pm_metrics_term = NULL,
+#else
 	.pm_metrics_init = gpu_pm_metrics_init,
 	.pm_metrics_term = gpu_pm_metrics_term,
+#endif
 #else
 	.pm_metrics_init = NULL,
 	.pm_metrics_term = NULL,
@@ -1074,6 +1082,9 @@ struct kbase_vendor_callbacks exynos_callbacks = {
 	.pm_record_state = NULL,
 #endif
 	.register_dump = gpu_register_dump,
+#ifdef CONFIG_MALI_DVFS_USER
+	.dvfs_process_job = gpu_dvfs_process_job,
+#endif
 };
 
 uintptr_t gpu_get_callbacks(void)
