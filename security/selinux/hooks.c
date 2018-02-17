@@ -101,21 +101,13 @@ extern struct security_operations *security_ops;
 static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
 
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-int selinux_enforcing;
+RKP_RO_AREA int selinux_enforcing = 0;
 
 static int __init enforcing_setup(char *str)
 {
 	unsigned long enforcing;
 	if (!kstrtoul(str, 0, &enforcing))
-#if defined(SELINUX_ALWAYS_ENFORCE) || \
-	defined(SELINUX_DEFAULT_ENFORCE)
-		selinux_enforcing = 1;
-#elif defined(SELINUX_ALWAYS_PERMISSIVE) || \
-	  defined(SELINUX_DEFAULT_PERMISSIVE)
-		selinux_enforcing = 0;
-#else
 		selinux_enforcing = enforcing ? 1 : 0;
-#endif
 	return 1;
 }
 __setup("enforcing=", enforcing_setup);
@@ -128,14 +120,7 @@ static int __init selinux_enabled_setup(char *str)
 {
 	unsigned long enabled;
 	if (!kstrtoul(str, 0, &enabled))
-#if defined(SELINUX_ALWAYS_ENFORCE) || \
-	defined(SELINUX_DEFAULT_ENFORCE) || \
-    defined(SELINUX_ALWAYS_PERMISSIVE) || \
-	defined(SELINUX_DEFAULT_PERMISSIVE)
-		selinux_enabled = 1;
-#else
 		selinux_enabled = enabled ? 1 : 0;
-#endif
 	return 1;
 }
 __setup("selinux=", selinux_enabled_setup);
@@ -418,14 +403,36 @@ static int selinux_is_sblabel_mnt(struct super_block *sb)
 {
 	struct superblock_security_struct *sbsec = sb->s_security;
 
-	return sbsec->behavior == SECURITY_FS_USE_XATTR ||
-		sbsec->behavior == SECURITY_FS_USE_TRANS ||
-		sbsec->behavior == SECURITY_FS_USE_TASK ||
-		/* Special handling. Genfs but also in-core setxattr handler */
-		!strcmp(sb->s_type->name, "sysfs") ||
-		!strcmp(sb->s_type->name, "pstore") ||
-		!strcmp(sb->s_type->name, "debugfs") ||
-		!strcmp(sb->s_type->name, "rootfs");
+	if (sbsec->behavior == SECURITY_FS_USE_XATTR ||
+	    sbsec->behavior == SECURITY_FS_USE_TRANS ||
+	    sbsec->behavior == SECURITY_FS_USE_TASK ||
+	    sbsec->behavior == SECURITY_FS_USE_NATIVE)
+		return 1;
+
+	if (strncmp(sb->s_type->name, "pstore", sizeof("pstore")) == 0)
+		return 1;
+
+	if (strncmp(sb->s_type->name, "debugfs", sizeof("debugfs")) == 0)
+		return 1;
+
+	if (strncmp(sb->s_type->name, "f2fs", sizeof("f2fs")) == 0)
+		return 1;
+
+	if (strncmp(sb->s_type->name, "sdcardfs", sizeof("sdcardfs")) == 0)
+		return 1;
+
+	/* Special handling for sysfs. Is genfs but also has setxattr handler*/
+	if (strncmp(sb->s_type->name, "sysfs", sizeof("sysfs")) == 0)
+		return 1;
+
+	/*
+	 * Special handling for rootfs. Is genfs but supports
+	 * setting SELinux context on in-core inodes.
+	 */
+	if (strncmp(sb->s_type->name, "rootfs", sizeof("rootfs")) == 0)
+		return 1;
+
+	return 0;
 }
 
 static int sb_finish_set_opts(struct super_block *sb)
@@ -4868,19 +4875,7 @@ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 			       "SELinux: unrecognized netlink message:"
 			       " protocol=%hu nlmsg_type=%hu sclass=%hu\n",
 			       sk->sk_protocol, nlh->nlmsg_type, sksec->sclass);
-#if defined(SELINUX_ALWAYS_ENFORCE)
-			if (security_get_allow_unknown())
-#elif defined(SELINUX_ALWAYS_PERMISSIVE)
-			/*
-			 * - selinux_enforcing = 0, because of permissive
-			 * - !selinux_enforcing would result in 1
-			 *
-			 * means the if would be completley useless
-			 */
-			// if (!selinux_enforcing || security_get_allow_unknown())
-#else
 			if (!selinux_enforcing || security_get_allow_unknown())
-#endif
 				err = 0;
 		}
 
@@ -5744,7 +5739,7 @@ static int selinux_setprocattr(struct task_struct *p,
 		return error;
 
 	/* Obtain a SID for the context, if one was specified. */
-	if (size && str[1] && str[1] != '\n') {
+	if (size && str[0] && str[0] != '\n') {
 		if (str[size-1] == '\n') {
 			str[size-1] = 0;
 			size--;
@@ -6174,12 +6169,7 @@ static struct security_operations selinux_ops = {
 static __init int selinux_init(void)
 {
 	if (!security_module_enable(&selinux_ops)) {
-#if defined(SELINUX_ALWAYS_ENFORCE) || \
-	defined(SELINUX_ALWAYS_PERMISSIVE)
-		selinux_enabled = 1;	
-#else
 		selinux_enabled = 0;
-#endif
 		return 0;
 	}
 
@@ -6202,11 +6192,10 @@ static __init int selinux_init(void)
 
 	if (register_security(&selinux_ops))
 		panic("SELinux: Unable to register with kernel.\n");
-#if defined(SELINUX_ALWAYS_ENFORCE)
-	selinux_enforcing = 1;
-#elif defined(SELINUX_ALWAYS_PERMISSIVE)
-	selinux_enforcing = 0;
-#endif
+
+	if (avc_add_callback(selinux_netcache_avc_callback, AVC_CALLBACK_RESET))
+		panic("SELinux: Unable to register AVC netcache callback\n");
+
 	if (selinux_enforcing)
 		printk(KERN_DEBUG "SELinux:  Starting in enforcing mode\n");
 	else
@@ -6277,13 +6266,10 @@ static struct nf_hook_ops selinux_nf_ops[] = {
 
 static int __init selinux_nf_ip_init(void)
 {
-	int err = 0;
-#if defined(SELINUX_ALWAYS_ENFORCE) || \
-	defined(SELINUX_ALWAYS_PERMISSIVE)
-	selinux_enabled = 1;
-#endif
+	int err;
+
 	if (!selinux_enabled)
-		goto out;
+		return 0;
 
 	printk(KERN_DEBUG "SELinux:  Registering netfilter hooks\n");
 
@@ -6291,7 +6277,6 @@ static int __init selinux_nf_ip_init(void)
 	if (err)
 		panic("SELinux: nf_register_hooks: error %d\n", err);
 
-out:
 	return 0;
 }
 
